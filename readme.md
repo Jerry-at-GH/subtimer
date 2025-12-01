@@ -6,9 +6,9 @@ it times Japanese subtitles automatically with forced alignment and VAD.
 
 `python>=3.10`, `ffmpeg`, `libc++1` (if on Linux), and then
 1. `pip install -U --force-reinstall -v git+https://github.com/TEN-framework/ten-vad.git`
-2. `pip install -U 'numpy<2' scipy pysubs2 librosa torch 'torchaudio<2.9' 'nemo_toolkit[asr]' javad silero-vad audio-separator`
+2. `pip install -U 'numpy<2' scipy pysubs2 librosa torch 'torchaudio<2.9' 'nemo_toolkit[asr]' javad silero-vad 'audio-separator[gpu]'`
 
-> in conda you might also need to `conda install -c conda-forge libstdcxx-ng`
+recommended for GPU usage; check each library's documentation for details. in `conda` you might also need to `conda install -c conda-forge libstdcxx-ng`.
 
 ## usage
 
