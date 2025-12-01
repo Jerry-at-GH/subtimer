@@ -223,8 +223,8 @@ def adjust_boundaries_with_vad_gaps(lines, vad_segs):
 def build_ass(lines):
     subs = pysubs2.SSAFile()
     subs.styles["Default"] = pysubs2.SSAStyle(
-        fontname="IPAexGothic",
-        fontsize=40,
+        fontname="GenSenRounded2 JP M",
+        fontsize=50,
         primarycolor=pysubs2.Color(r=255, g=255, b=255, a=0),
         secondarycolor=pysubs2.Color(r=0, g=213, b=255, a=0),
         outlinecolor=pysubs2.Color(r=0, g=0, b=0, a=0),
