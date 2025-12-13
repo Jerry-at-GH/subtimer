@@ -4,11 +4,12 @@ it times Japanese subtitles automatically with forced alignment and VAD.
 
 ## requirements
 
-`python>=3.10`, `ffmpeg`, `libc++1` (if on Linux), and then
-1. `pip install -U --force-reinstall -v git+https://github.com/TEN-framework/ten-vad.git`
-2. `pip install -U 'numpy<2' scipy pysubs2 librosa torch 'torchaudio<2.9' 'nemo_toolkit[asr]' javad silero-vad 'audio-separator[gpu]'`
+first get an Nvidia GPU. then install `python` (>=3.10), `ffmpeg`, `libc++1` (if on Linux). now run (preferably in a new `conda` environment; you might need to `conda install -c conda-forge libstdcxx-ng` first in that case)
 
-recommended for GPU usage; check each library's documentation for details. in `conda` you might also need to `conda install -c conda-forge libstdcxx-ng`.
+1. `pip install -U --force-reinstall git+https://github.com/TEN-framework/ten-vad`
+2. `pip install -U 'audio-separator[gpu]' javad librosa "nemo_toolkit[asr]@git+https://github.com/NVIDIA/NeMo" numpy pysubs2 scipy silero-vad torch 'torchaudio<2.9'`
+
+check each library's documentation for details. things may have changed since last update of this document. [this commit](https://github.com/NVIDIA-NeMo/NeMo/commit/a599d89f66abeb5f61c99c73902567fda7fae76a) of `nemo_toolkit` was tested.
 
 ## usage
 
@@ -52,4 +53,3 @@ both  |                        |   149   182   206
 ## credits
 
 this project contains code from [NeMo Forced Aligner](https://github.com/NVIDIA-NeMo/NeMo/tree/main/tools/nemo_forced_aligner).
-
