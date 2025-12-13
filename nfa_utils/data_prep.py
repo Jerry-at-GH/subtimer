@@ -37,7 +37,7 @@ def get_batch_starts_ends(manifest_filepath, batch_size):
     Get the start and end ids of the lines we will use for each 'batch'.
     """
 
-    with open(manifest_filepath, 'r') as f:
+    with open(manifest_filepath, "r") as f:
         num_lines_in_manifest = sum(1 for _ in f)
 
     starts = [x for x in range(0, num_lines_in_manifest, batch_size)]
@@ -55,7 +55,7 @@ def is_entry_in_any_lines(manifest_filepath, entry):
 
     entry_in_manifest = False
 
-    with open(manifest_filepath, 'r') as f:
+    with open(manifest_filepath, "r") as f:
         for line in f:
             data = json.loads(line)
 
@@ -69,7 +69,7 @@ def is_entry_in_all_lines(manifest_filepath, entry):
     """
     Returns True is entry is a key in all of the JSON lines in manifest_filepath.
     """
-    with open(manifest_filepath, 'r') as f:
+    with open(manifest_filepath, "r") as f:
         for line in f:
             data = json.loads(line)
 
@@ -146,7 +146,6 @@ def is_sub_or_superscript_pair(ref_text, text):
 
 
 def restore_token_case(text_str, tokens):
-
     # remove repeated "▁" and "_" from text_str as that is what the tokenizer will do
     while "▁▁" in text_str:
         text_str = text_str.replace("▁▁", "▁")
@@ -180,9 +179,7 @@ def restore_token_case(text_str, tokens):
                             token_cased += token_char
 
                     else:
-                        raise RuntimeError(
-                            f"Unexpected error - failed to recover capitalization of tokens for text {text_str}"
-                        )
+                        raise RuntimeError(f"Unexpected error - failed to recover capitalization of tokens for text {text_str}")
 
         tokens_cased.append(token_cased)
 
@@ -221,7 +218,12 @@ class Utterance:
 
 
 def get_utt_obj(
-    text, model, separator, T, audio_filepath, utt_id,
+    text,
+    model,
+    separator,
+    T,
+    audio_filepath,
+    utt_id,
 ):
     """
     Function to create an Utterance object and add all necessary information to it except
@@ -246,12 +248,12 @@ def get_utt_obj(
     # remove any empty segments
     segments = [seg for seg in segments if len(seg) > 0]
 
-    utt = Utterance(text=text, audio_filepath=audio_filepath, utt_id=utt_id,)
+    utt = Utterance(text=text, audio_filepath=audio_filepath, utt_id=utt_id)
 
     # build up lists: token_ids_with_blanks, segments_and_tokens.
     # The code for these is different depending on whether we use char-based tokens or not
-    if hasattr(model, 'tokenizer'):
-        if hasattr(model, 'blank_id'):
+    if hasattr(model, "tokenizer"):
+        if hasattr(model, "blank_id"):
             BLANK_ID = model.blank_id
         else:
             BLANK_ID = len(model.tokenizer.vocab)  # TODO: check
@@ -277,7 +279,7 @@ def get_utt_obj(
             return utt
 
         # build up data structures containing segments/tokens
-        utt.segments_and_tokens.append(Token(text=BLANK_TOKEN, text_cased=BLANK_TOKEN, s_start=0, s_end=0,))
+        utt.segments_and_tokens.append(Token(text=BLANK_TOKEN, text_cased=BLANK_TOKEN, s_start=0, s_end=0))
 
         segment_s_pointer = 1  # first segment will start at s=1 because s=0 is a blank
 
@@ -301,14 +303,11 @@ def get_utt_obj(
 
             token_strs = segment.split(" ")  # space-separated substrings
             for token_str_i, token_str in enumerate(token_strs):
-
                 tokens = model.tokenizer.text_to_tokens(token_str)
                 token_ids = model.tokenizer.text_to_ids(token_str)
                 tokens_cased = restore_token_case(token_str, tokens)
 
-                for token_i, (token, token_id, token_cased) in enumerate(
-                    zip(tokens, token_ids, tokens_cased)
-                ):
+                for token_i, (token, token_id, token_cased) in enumerate(zip(tokens, token_ids, tokens_cased)):
                     # add the text tokens and the blanks in between them to token_ids_with_blanks
                     utt.token_ids_with_blanks.extend([token_id, BLANK_ID])
                     # adding Token object for non-blank token
@@ -361,7 +360,6 @@ def get_utt_obj(
         return utt
 
     elif hasattr(model.decoder, "vocabulary"):  # i.e. tokenization is simply character-based
-
         BLANK_ID = len(model.decoder.vocabulary)  # TODO: check this is correct
         SPACE_ID = model.decoder.vocabulary.index(" ")
 
@@ -386,7 +384,7 @@ def get_utt_obj(
             return utt
 
         # build up data structures containing segments/tokens
-        utt.segments_and_tokens.append(Token(text=BLANK_TOKEN, text_cased=BLANK_TOKEN, s_start=0, s_end=0,))
+        utt.segments_and_tokens.append(Token(text=BLANK_TOKEN, text_cased=BLANK_TOKEN, s_start=0, s_end=0))
 
         segment_s_pointer = 1  # first segment will start at s=1 because s=0 is a blank
 
@@ -411,7 +409,6 @@ def get_utt_obj(
 
             token_strs = segment.split(" ")  # space-separated substrings
             for token_str_i, token_str in enumerate(token_strs):
-
                 # convert string to list of characters
                 tokens = list(token_str)
                 # convert list of characters to list of their ids in the vocabulary
@@ -520,9 +517,9 @@ def add_t_start_end_to_utt_obj(utt_obj, alignment_utt, output_timestep_duration)
     """
     Function to add t_start and t_end (representing time in seconds) to the Utterance object utt_obj.
     Args:
-        utt_obj: Utterance object to which we will add t_start and t_end for its 
+        utt_obj: Utterance object to which we will add t_start and t_end for its
             constituent segments and tokens.
-        alignment_utt: a list of ints indicating which token does the alignment pass through at each 
+        alignment_utt: a list of ints indicating which token does the alignment pass through at each
             timestep (will take the form [0, 0, 1, 1, ..., <num of tokens including blanks in uterance>]).
         output_timestep_duration: a float indicating the duration of a single output timestep from
             the ASR Model.
@@ -567,9 +564,7 @@ def add_t_start_end_to_utt_obj(utt_obj, alignment_utt, output_timestep_duration)
                     token.t_start = -1
 
                 if token.s_end in num_to_last_alignment_appearance:
-                    token.t_end = (
-                        num_to_last_alignment_appearance[token.s_end] + 1
-                    ) * output_timestep_duration
+                    token.t_end = (num_to_last_alignment_appearance[token.s_end] + 1) * output_timestep_duration
                 else:
                     token.t_end = -1
 
@@ -628,7 +623,7 @@ def get_batch_variables(
                 )
 
         # if hypotheses form a tuple (from Hybrid model), extract just "best" hypothesis
-        if type(hypotheses) == tuple and len(hypotheses) == 2:
+        if type(hypotheses) is tuple and len(hypotheses) == 2:
             hypotheses = hypotheses[0]
 
         for hypothesis in hypotheses:
@@ -648,7 +643,7 @@ def get_batch_variables(
             pred_text_batch.append(hyp)
 
     # we loop over every line in the manifest that is in our current batch,
-    # and record the y (list of tokens, including blanks), U (list of lengths of y) and 
+    # and record the y (list of tokens, including blanks), U (list of lengths of y) and
     # the corresponding utterance objects
     y_list_batch = []
     U_list_batch = []
@@ -694,7 +689,7 @@ def get_batch_variables(
     T_max = max(T_list_batch)
     U_max = max(U_list_batch)
     #  V = the number of tokens in the vocabulary + 1 for the blank token.
-    if hasattr(model, 'tokenizer'):
+    if hasattr(model, "tokenizer"):
         V = len(model.tokenizer.vocab) + 1
     else:
         V = len(model.decoder.vocabulary) + 1
@@ -718,13 +713,13 @@ def get_batch_variables(
 
     # calculate output_timestep_duration if it is None
     if output_timestep_duration is None:
-        if not 'window_stride' in model.cfg.preprocessor:
+        if "window_stride" not in model.cfg.preprocessor:
             raise ValueError(
                 "Don't have attribute 'window_stride' in 'model.cfg.preprocessor' => cannot calculate "
                 " model_downsample_factor => stopping process"
             )
 
-        if not 'sample_rate' in model.cfg.preprocessor:
+        if "sample_rate" not in model.cfg.preprocessor:
             raise ValueError(
                 "Don't have attribute 'sample_rate' in 'model.cfg.preprocessor' => cannot calculate start "
                 " and end time of segments => stopping process"
