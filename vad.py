@@ -57,7 +57,7 @@ def heuristic_vad(video_path, vad_dir):
 
     ten = np.load(os.path.join(vad_dir, "ten.npy"))
     separator = Separator(model_file_dir=os.path.expanduser("~/audio-separator-models"))
-    separator.load_model(model_filename="mel_band_roformer_vocals_fv4_gabox.ckpt")
+    separator.load_model(model_filename="mel_band_roformer_vocals_fv6_gabox.ckpt")
 
     input_file = video_path
     separator.separate(input_file, {"Vocals": "vocals", "Instrumental": "inst"})
