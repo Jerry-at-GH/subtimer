@@ -349,7 +349,6 @@ def main():
             [
                 sys.executable,
                 os.path.join(os.path.dirname(__file__), "nfa.py"),
-                "pretrained_name=nvidia/parakeet-tdt_ctc-0.6b-ja",
                 f"manifest_filepath={manifest_path}",
                 f"output_dir={nfa_output_dir}",
                 "additional_segment_grouping_separator=|",
