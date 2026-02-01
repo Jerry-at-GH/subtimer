@@ -242,7 +242,7 @@ def main(cfg: AlignmentConfig):
                 T_b = int(T_batch[b])
                 audio_fp = utt_obj.audio_filepath
                 vad_dir = os.path.join(os.path.dirname(audio_fp) or ".", cfg.vad_dir_name)
-                vad_pred = ensemble_from_dir(vad_dir)
+                _, vad_pred = ensemble_from_dir(vad_dir)  # check out FRAME_HOP_MS in vad.py
 
                 # resample to T_b
                 vad_res = np.clip(resample(vad_pred, T_b), 0.0, 1.0)

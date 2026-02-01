@@ -1,14 +1,23 @@
+import logging
 import os
 import subprocess
+import warnings
+from contextlib import redirect_stderr, redirect_stdout
 
+import librosa
 import numpy as np
 import pysubs2
-from scipy.signal import resample
 import torch
+from scipy.signal import resample
 
+FRAME_HOP_MS = 10  # ten VAD uses 10ms per frame
 
-FRAME_HOP_SEC = 0.01  # 10ms frames
 DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+
+
+def _load_audio_16k(audio_path):
+    wav, _ = librosa.load(audio_path, sr=16000, mono=True)
+    return torch.from_numpy(wav)
 
 
 def _soften(x, k):
@@ -18,28 +27,27 @@ def _soften(x, k):
 
 def javad_vad(audio_16k_path, vad_dir):
     from javad import Processor
-    from silero_vad import read_audio
 
     processor = Processor(model_name="precise", device=DEVICE)
-    wav = read_audio(audio_16k_path, sampling_rate=16000)
+    wav = _load_audio_16k(audio_16k_path)
     javad = processor.logits(wav).cpu().numpy()
     np.save(os.path.join(vad_dir, "javad.npy"), javad)
     return javad
 
 
 def silero_vad(audio_16k_path, vad_dir):
-    from silero_vad import load_silero_vad, read_audio
+    from silero_vad import load_silero_vad
 
     model = load_silero_vad()
-    wav = read_audio(audio_16k_path, sampling_rate=16000)
+    wav = _load_audio_16k(audio_16k_path)
     silero = model.audio_forward(wav, sr=16000).numpy().flatten()
     np.save(os.path.join(vad_dir, "silero.npy"), silero)
     return silero
 
 
 def ten_vad(audio_16k_path, vad_dir):
-    from ten_vad import TenVad
     import scipy.io.wavfile as Wavfile
+    from ten_vad import TenVad
 
     _, data = Wavfile.read(audio_16k_path)
     hop_size = 160  # 16000Hz / (1s / 10ms)
@@ -53,7 +61,10 @@ def ten_vad(audio_16k_path, vad_dir):
 def heuristic_vad(video_path, vad_dir):
     import shutil
     from audio_separator.separator import Separator
-    import librosa
+
+    logger = logging.getLogger("audio_separator.separator.separator")
+    logger.setLevel(logging.ERROR)
+    logger.propagate = False
 
     ten = np.load(os.path.join(vad_dir, "ten.npy"))
     separator = Separator(model_file_dir=os.path.expanduser("~/audio-separator-models"))
@@ -78,8 +89,6 @@ def heuristic_vad(video_path, vad_dir):
     )
 
     y, sr = librosa.load(os.path.join(vad_dir, "vocals_mono_16k.wav"))
-    import librosa.feature
-
     rms = librosa.feature.rms(y=y)[0]
     rms_downsampled = np.clip(resample(rms, len(ten)), 0, rms.max())
 
@@ -93,23 +102,25 @@ def heuristic_vad(video_path, vad_dir):
 
 
 def ensemble_from_dir(vad_dir):
-    """Ensemble VAD arrays from directory (ten, javad, silero, heuristic with softening)."""
     ten = np.load(os.path.join(vad_dir, "ten.npy"))
+    javad = np.load(os.path.join(vad_dir, "javad.npy"))
+    silero = np.load(os.path.join(vad_dir, "silero.npy"))
+    heuristic = np.load(os.path.join(vad_dir, "heuristic.npy"))
     stacks = [
         ten,
-        _soften(np.clip(resample(np.load(os.path.join(vad_dir, "javad.npy")), len(ten)), 0, 1), 0.2),
-        _soften(np.clip(resample(np.load(os.path.join(vad_dir, "silero.npy")), len(ten)), 0, 1), 0.4),
+        _soften(np.clip(resample(javad, len(ten)), 0, 1), 0.2),
+        _soften(np.clip(resample(silero, len(ten)), 0, 1), 0.4),
         _soften(
-            np.clip(resample(np.clip((np.load(os.path.join(vad_dir, "heuristic.npy")) - 0.005), 0, 0.1) / 0.1, len(ten)), 0, 1),
+            np.clip(resample(np.clip((heuristic - 0.005), 0, 0.1) / 0.1, len(ten)), 0, 1),
             3,
         ),
     ]
-    return np.clip(np.mean(np.stack(stacks, axis=1), axis=1), 0, 1)
+    return heuristic, np.clip(np.mean(np.stack(stacks, axis=1), axis=1), 0, 1)
 
 
-def pred_to_vad(pred, onset=0.43, offset=0.43, min_on_sec=0.08, min_off_sec=0.08):
-    min_on_frames = round(min_on_sec / FRAME_HOP_SEC)
-    min_off_frames = round(min_off_sec / FRAME_HOP_SEC)
+def pred_to_vad(pred, onset=0.43, offset=0.43, min_on_ms=80, min_off_ms=80):
+    min_on_frames = round(min_on_ms / FRAME_HOP_MS)
+    min_off_frames = round(min_off_ms / FRAME_HOP_MS)
 
     # hysteresis threshold
     vad_labels = np.zeros_like(pred, dtype=bool)
@@ -168,15 +179,11 @@ def pred_to_vad(pred, onset=0.43, offset=0.43, min_on_sec=0.08, min_off_sec=0.08
 def to_srt(merged, srt_file):
     subs = pysubs2.SSAFile()
     for start, end in merged:
-        subs.append(pysubs2.SSAEvent(start=int(start * 1000 * FRAME_HOP_SEC), end=int(end * 1000 * FRAME_HOP_SEC), text="VAD"))
+        subs.append(pysubs2.SSAEvent(start=int(start * FRAME_HOP_MS), end=int(end * FRAME_HOP_MS), text="VAD"))
     subs.save(srt_file)
 
 
 def run_vad(work_dir, video_path):
-    from contextlib import redirect_stdout, redirect_stderr
-    import logging
-    import warnings
-
     audio_16k_path = os.path.join(work_dir, "mono_16k.wav")
     assert os.path.exists(video_path)
     assert os.path.exists(audio_16k_path)
@@ -194,7 +201,7 @@ def run_vad(work_dir, video_path):
 
     with redirect_stdout(open(os.devnull, "w")), redirect_stderr(open(os.devnull, "w")):
         warnings.filterwarnings("ignore")
-        logging.getLogger().setLevel(logging.ERROR)
+
         if not os.path.exists(os.path.join(vad_dir, "ten.npy")):
             ten_vad(audio_16k_path, vad_dir)
         if not os.path.exists(os.path.join(vad_dir, "javad.npy")):
@@ -204,7 +211,9 @@ def run_vad(work_dir, video_path):
         if not os.path.exists(os.path.join(vad_dir, "heuristic.npy")):
             heuristic_vad(audio_16k_path, vad_dir)
 
-    pred = ensemble_from_dir(vad_dir)
+    heuristic_pred, pred = ensemble_from_dir(vad_dir)
+    heuristic_merged, _ = pred_to_vad(heuristic_pred, onset=0.01, offset=0.01)
+    heuristic_merged_ms = [(s * FRAME_HOP_MS, e * FRAME_HOP_MS) for s, e in heuristic_merged]
     merged, _ = pred_to_vad(pred)
-    merged_ms = [(s * FRAME_HOP_SEC * 1000, e * FRAME_HOP_SEC * 1000) for s, e in merged]
-    return merged_ms
+    merged_ms = [(s * FRAME_HOP_MS, e * FRAME_HOP_MS) for s, e in merged]
+    return heuristic_merged_ms, merged_ms

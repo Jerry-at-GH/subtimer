@@ -10,7 +10,6 @@ import pysubs2
 
 from vad import run_vad
 
-
 WORD_CHARS = "A-Za-z0-9\u3040-\u309f\u30a0-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
 non_word = re.compile(rf"[^{WORD_CHARS}]+")
 
@@ -35,6 +34,7 @@ def load_lines(lines_path):
             if len(e.text.strip()) > 0 and not e.is_comment
         ]
         lines = [{**l, "match": re.sub(non_word, "", l["clean"])} for l in lines]
+        return lines
     elif os.path.splitext(lines_path)[1].lower() == ".txt":
         lines = []
         sep = "\t"
@@ -86,11 +86,11 @@ def process_segments(
     segments,
     lines,
     label,
+    do_check_with_raw,
     start_pad=0,
     end_pad=2,
     pad_time_frac=0.5,
     optimize_long_seg=True,
-    do_check_with_raw=True,
 ):
     """
     Args:
@@ -128,10 +128,12 @@ def process_segments(
                 start = (segments[start_i]["start"] - padded_start_time * pad_time_frac) * 1000
                 end = (segments[end_i]["end"] + padded_end_time * pad_time_frac) * 1000
 
-                if optimize_long_seg:  # only consider segments that's not added by padding
+                if optimize_long_seg:
                     long_seg = [
                         ((i + 0.5) / max(1, end_i - start_i), s["duration"] - 0.8)
-                        for i, s in enumerate(segments[start_i : end_i + 1])
+                        for i, s in enumerate(
+                            segments[start_i : end_i + 1]  # only consider segments that's not added by padding
+                        )
                         if s["duration"] > 0.8
                     ]
                     if long_seg:
@@ -220,6 +222,21 @@ def adjust_boundaries_with_vad_gaps(lines, vad_segs):
             lines[j]["res_start"] = int(max(nearest_gap[1], lines[i]["res_end"] + 1))
 
 
+def cut_off_silence(lines, heuristic_segs, start=True, end=False):
+    for l in lines:
+        if not l.get("clean"):
+            continue
+
+        s, e = l["res_start"], l["res_end"]
+        overlaps = [(hs, he) for hs, he in heuristic_segs if he >= s and hs <= e]
+        if overlaps:
+            if start:
+                s = max(s, min(hs for hs, _ in overlaps))
+            if end:
+                e = min(e, max(he for _, he in overlaps))
+        l["res_start"], l["res_end"] = s, e
+
+
 def build_ass(lines):
     subs = pysubs2.SSAFile()
     subs.styles["Default"] = pysubs2.SSAStyle(
@@ -272,41 +289,46 @@ def evaluate_alignment(dialogue_events, ground_path, fps):
     ground.events = [e for e in ground.events if not e.is_comment and e.style == "Default"]
     assert len(dialogue_events) == len(ground.events)
 
-    start_mederr = statistics.median((g.start - p.start) for g, p in zip(ground.events, dialogue_events))
-    end_mederr = statistics.median((g.end - p.end) for g, p in zip(ground.events, dialogue_events))
+    start_quantiles = statistics.quantiles(((g.start - p.start) for g, p in zip(ground.events, dialogue_events)), n=100)
+    end_quantiles = statistics.quantiles(((g.end - p.end) for g, p in zip(ground.events, dialogue_events)), n=100)
 
     start_mae = statistics.mean(abs(g.start - p.start) for g, p in zip(ground.events, dialogue_events))
     end_mae = statistics.mean(abs(g.end - p.end) for g, p in zip(ground.events, dialogue_events))
+    both_mae = (start_mae + end_mae) / 2
 
-    start_counts = []
-    end_counts = []
-    both_counts = []
-    for frame_count in [3, 6, 12]:
-        threshold = 1000 / fps * frame_count  # ms
-        start_counts.append(sum(1 for g, p in zip(ground.events, dialogue_events) if abs(g.start - p.start) <= threshold))
-        end_counts.append(sum(1 for g, p in zip(ground.events, dialogue_events) if abs(g.end - p.end) <= threshold))
-        both_counts.append(
+    total = len(dialogue_events)
+    start_frac = []
+    end_frac = []
+    both_frac = []
+    for threshold in [100, 500]:
+        start_frac.append(sum(1 for g, p in zip(ground.events, dialogue_events) if abs(g.start - p.start) <= threshold) / total)
+        end_frac.append(sum(1 for g, p in zip(ground.events, dialogue_events) if abs(g.end - p.end) <= threshold) / total)
+        both_frac.append(
             sum(
                 1
                 for g, p in zip(ground.events, dialogue_events)
                 if abs(g.start - p.start) <= threshold and abs(g.end - p.end) <= threshold
             )
+            / total
         )
-    print(f"[total {len(dialogue_events)}]")
-    print("      | med err | mean abs err |    ≤3    ≤6   ≤12 frames")
+    print(f"[total: {total} lines]")
+    print("      |   p10   p25   p50   p75   p90    | mean abs |   ≤100   ≤500 ms")
     print(
-        f"{'start':5} | {round(start_mederr):+5d}ms |      {round(start_mae):5d}ms | {start_counts[0]:5d} {start_counts[1]:5d} {start_counts[2]:5d}"
+        f"{'start':5} | {round(start_quantiles[10]):+5d} {round(start_quantiles[25]):+5d} {round(start_quantiles[50]):+5d} {round(start_quantiles[75]):+5d} {round(start_quantiles[90]):+5d} ms |  {round(start_mae):5d}ms | {start_frac[0] * 100:5.1f}% {start_frac[1] * 100:5.1f}%"
     )
     print(
-        f"{'end':5} | {round(end_mederr):+5d}ms |      {round(end_mae):5d}ms | {end_counts[0]:5d} {end_counts[1]:5d} {end_counts[2]:5d}"
+        f"{'end':5} | {round(end_quantiles[10]):+5d} {round(end_quantiles[25]):+5d} {round(end_quantiles[50]):+5d} {round(end_quantiles[75]):+5d} {round(end_quantiles[90]):+5d} ms |  {round(end_mae):5d}ms | {end_frac[0] * 100:5.1f}% {end_frac[1] * 100:5.1f}%"
     )
-    print(f"{'both':5} |                        | {both_counts[0]:5d} {both_counts[1]:5d} {both_counts[2]:5d}")
+    print(
+        f"{'both':5} |                                  |  {round(both_mae):5d}ms | {both_frac[0] * 100:5.1f}% {both_frac[1] * 100:5.1f}%"
+    )
 
 
 def main():
     parser = argparse.ArgumentParser(description="generate ASS via Forced Alignment + VAD refinement.")
     parser.add_argument("--work_dir", required=True, help="all files below relative to this, unless absolute")
     parser.add_argument("--lines", required=True, help="path to lines TXT/ASS file")
+    parser.add_argument("--do_check_with_raw", action="store_true", help="whether to check alignment against raw timestamps")
     parser.add_argument("--video", default="1.mkv", help="path to video file for alignment")
     parser.add_argument("--output", default="align.ass", help="output ASS filename")
     parser.add_argument("--ground", default=None, help="ground truth ASS filename for evaluation")
@@ -329,7 +351,7 @@ def main():
         subprocess.run(["ffmpeg", "-i", video_path, "-ac", "1", "-ar", "16000", audio_16k_path], capture_output=True)
 
     # VAD
-    vad_segs = run_vad(work_dir, video_path=video_path)
+    heuristic_segs, vad_segs = run_vad(work_dir, video_path=video_path)
     if not vad_segs:
         raise SystemExit("VAD failed")
 
@@ -362,7 +384,7 @@ def main():
 
     # refine with VAD
     seg = load_ctm_tokens(ctm_path)
-    process_segments(seg, lines, label="nfa")
+    process_segments(seg, lines, label="nfa", do_check_with_raw=args.do_check_with_raw)
     for l in lines:
         if l.get("clean"):
             l["res_start"] = l.get("nfa_start", 0)
@@ -370,6 +392,7 @@ def main():
 
     snap_lines_with_vad(lines, vad_segs)
     adjust_boundaries_with_vad_gaps(lines, vad_segs)
+    cut_off_silence(lines, heuristic_segs)
 
     subs, dialogue_events, _ = build_ass(lines)
     output_path = args.output

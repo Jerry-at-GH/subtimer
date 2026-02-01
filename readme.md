@@ -4,12 +4,16 @@ it times Japanese subtitles automatically with forced alignment and VAD.
 
 ## requirements
 
-first get an Nvidia GPU. then install `python` (>=3.10), `ffmpeg`, `libc++1` (if on Linux). now run (preferably in a new `conda` environment; you might need to `conda install -c conda-forge libstdcxx-ng` first in that case)
+first get an Nvidia GPU. then install `libc++1` (if on Linux). now run
 
-1. `pip install -U --force-reinstall git+https://github.com/TEN-framework/ten-vad.git`
-2. `pip install -U 'audio-separator[gpu]' javad librosa 'nemo_toolkit[asr]' numpy pysubs2 scipy silero-vad torch 'torchaudio<2.9'`
+```
+conda create -n speech python=3.12 -y
+conda activate speech
+conda install -c conda-forge ffmpeg libstdcxx-ng -y
+pip install -U --force-reinstall git+https://github.com/TEN-framework/ten-vad 'nemo_toolkit[asr]@git+https://github.com/NVIDIA/NeMo' 'audio-separator[gpu]' javad librosa numpy pysubs2 scipy silero-vad torch torchaudio
+```
 
-check each library's documentation for details. things may have changed since last update of this document.
+where `uv` is optional.
 
 ## usage
 
@@ -43,11 +47,11 @@ python evaluate.py --work_dir /some/path --lines 1.txt --video 1.mkv --ground gr
 and you should see something like
 
 ```
-[total 293]
-      | med err | mean abs err |    ≤3    ≤6   ≤12 frames
-start |    +0ms |        380ms |   216   235   244
-end   |    +0ms |        781ms |   182   212   231
-both  |                        |   149   182   206
+[total: 297 lines]
+      |   p10   p25   p50   p75   p90    | mean abs |   ≤100   ≤500 ms
+start |    +0    +0    +0    +0   +30 ms |    106ms |  92.3%  95.6%
+end   |  -447   -10    +0    +0    +0 ms |    628ms |  75.4%  87.2%
+both  |                                  |    367ms |  71.0%  85.2%
 ```
 
 ## credits
