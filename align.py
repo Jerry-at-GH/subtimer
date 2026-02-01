@@ -328,7 +328,7 @@ def main():
     parser = argparse.ArgumentParser(description="generate ASS via Forced Alignment + VAD refinement.")
     parser.add_argument("--work_dir", required=True, help="all files below relative to this, unless absolute")
     parser.add_argument("--lines", required=True, help="path to lines TXT/ASS file")
-    parser.add_argument("--do_check_with_raw", action="store_true", help="whether to check alignment against raw timestamps")
+    parser.add_argument("--do-check-with-raw", action="store_true", help="whether to check alignment against raw timestamps")
     parser.add_argument("--video", default="1.mkv", help="path to video file for alignment")
     parser.add_argument("--output", default="align.ass", help="output ASS filename")
     parser.add_argument("--ground", default=None, help="ground truth ASS filename for evaluation")

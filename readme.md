@@ -34,7 +34,7 @@ JAPANESE	TRANSLATION
 (NOTES HERE
 ```
 
-where in dialogue lines original text and translation are separated by a tab, and note lines start with `(`. if it's ASS, it should only contains Japanese dialogue and have been approximately timed to the video (the program prevents output that deviates too much from the original timing).
+where in dialogue lines original text and translation are separated by a tab, and note lines start with `(`. if it's ASS, it should only contains Japanese dialogue and have been approximately timed to the video (in which case you can pass in `--do-check-with-raw` to prevent output from deviating too much from the original timing).
 
 ### evaluation
 
