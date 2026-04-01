@@ -216,4 +216,7 @@ def run_vad(work_dir, video_path):
     heuristic_merged_ms = [(s * FRAME_HOP_MS, e * FRAME_HOP_MS) for s, e in heuristic_merged]
     merged, _ = pred_to_vad(pred)
     merged_ms = [(s * FRAME_HOP_MS, e * FRAME_HOP_MS) for s, e in merged]
-    return heuristic_merged_ms, merged_ms
+
+    if not merged_ms:
+        raise SystemExit("VAD failed")
+    return FRAME_HOP_MS, pred, heuristic_merged_ms, merged_ms

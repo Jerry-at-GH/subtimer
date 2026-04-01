@@ -6,8 +6,8 @@ import subprocess
 import sys
 from bisect import bisect_left
 
+import numpy as np
 import pysubs2
-
 from vad import run_vad
 
 WORD_CHARS = "A-Za-z0-9\u3040-\u309f\u30a0-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff"
@@ -17,6 +17,7 @@ SNAP_START_WINDOW_MS = 400
 SNAP_END_WINDOW_MS = 800
 GAP_WINDOW_MS = 200
 MIN_DURATION_MS = 200
+CHECK_WITH_RAW_TOLERANCE_MS = 2000
 
 
 def load_lines(lines_path):
@@ -33,7 +34,7 @@ def load_lines(lines_path):
             for e in subs.events
             if len(e.text.strip()) > 0 and not e.is_comment
         ]
-        lines = [{**l, "match": re.sub(non_word, "", l["clean"])} for l in lines]
+        lines = [{**line, "match": re.sub(non_word, "", line["clean"])} for line in lines]
         return lines
     elif os.path.splitext(lines_path)[1].lower() == ".txt":
         lines = []
@@ -60,54 +61,38 @@ def load_lines(lines_path):
         raise NotImplementedError("unsupported file type for lines")
 
 
-def load_ctm_tokens(ctm_filepath):
-    seg = []
-    with open(ctm_filepath, "r", encoding="utf-8") as f:
-        for line in f:
-            c = line.strip().split()
-            if not c:
-                continue
-            start = float(c[2])
-            dur = float(c[3])
-            token = c[4].replace("<b>", "")
-            seg.append({"start": start, "duration": dur, "end": start + dur, "text": token})
-    return seg
-
-
-def check_with_raw(line, start, end, tolerance=2000):
-    if "raw_start" in line and not (float(line["raw_start"]) - tolerance < start < float(line.get("raw_end", start))):
-        start = float(line["raw_start"])
-    if "raw_end" in line and not (float(line.get("raw_start", end)) < end < float(line["raw_end"]) + tolerance):
-        end = float(line["raw_end"])
-    return start, end
-
-
-def process_segments(
-    segments,
-    lines,
-    label,
-    do_check_with_raw,
-    start_pad=0,
-    end_pad=2,
-    pad_time_frac=0.5,
-    optimize_long_seg=True,
-):
+def nearest_boundary_value(x, boundaries, cap):
     """
-    Args:
-        start_pad: in number of segments. specify wisely according to model behavior
-        end_pad: in number of segments. specify wisely according to model behavior
+    finds the nearest boundary value within cap range of x.
     """
-    for s in segments:
-        s["match"] = non_word.sub("", s["text"])
+    if not boundaries:
+        return None
+    i = bisect_left(boundaries, x)
+    candidates = []
+    if i < len(boundaries):
+        candidates.append(boundaries[i])
+    if i > 0:
+        candidates.append(boundaries[i - 1])
+    candidates = [c for c in candidates if abs(c - x) <= cap]
+    return min(candidates, key=lambda c: abs(c - x)) if candidates else None
+
+
+def apply_to_lines(segments, lines, label, start_pad, end_pad, pad_time_frac, optimize_long_seg):
+    """
+    for an alignment run that generates `segments`, aligns them to `lines`, and write timings to fields starting with `label` in each line
+    `start_pad` and `end_pad` are in segment count, so they depend on how the aligner chunks tokens.
+    """
+    for segment in segments:
+        segment["match"] = non_word.sub("", segment["text"])
 
     start_i = 0
     line_iter = iter([l for l in lines if l["match"]])
     try:
-        l = next(line_iter)
-        match = l["match"]
-        for i, s in enumerate(segments):
-            if match.startswith(s["match"]):
-                match = match[len(s["match"]) :]
+        line = next(line_iter)
+        match = line["match"]
+        for i, segment in enumerate(segments):
+            if match.startswith(segment["match"]):
+                match = match[len(segment["match"]) :]
             if not match:
                 start_i = next(i_ for i_, s_ in enumerate(segments) if i_ >= start_i and s_["match"])
                 # this will only increase start_i; it skips non-word segments
@@ -143,98 +128,154 @@ def process_segments(
                         start += (1 - avg_position) * total_delta
                         end -= avg_position * total_delta
 
-                if do_check_with_raw:
-                    start, end = check_with_raw(l, start, end)
-
-                l[f"{label}_start"] = start
-                l[f"{label}_end"] = end
+                line[f"{label}_start"] = start
+                line[f"{label}_end"] = end
 
                 start_i = end_i + 1
-                l = next(line_iter)
-                match = str(l["match"])
+                line = next(line_iter)
+                match = str(line["match"])
     except StopIteration:
         pass
 
 
-def snap_lines_with_vad(lines, vad_segs):
-    prev_end = None
-    for l in lines:
-        if not l.get("clean"):
-            continue
-        s0 = int(l.get("res_start", 0))
-        e0 = int(l.get("res_end", 0))
-        # inline nearest onset/offset search within snap window
-        starts = [s for s, _ in vad_segs]
-        i = bisect_left(starts, s0)
-        onset_choices = []
-        if i < len(vad_segs):
-            onset_choices.append((i, vad_segs[i][0]))
-        if i - 1 >= 0:
-            onset_choices.append(((i - 1), vad_segs[i - 1][0]))
-        onset_choices = [(idx, c) for idx, c in onset_choices if abs(c - s0) <= SNAP_START_WINDOW_MS]
-        if onset_choices:
-            _, s = min(onset_choices, key=lambda t: abs(t[1] - s0))
-        else:
-            _, s = None, s0
+def run_nfa(work_dir, lines, audio_path):
+    nfa_audio_name = os.path.splitext(os.path.basename(audio_path))[0]
+    nfa_dir = os.path.join(work_dir, "nfa_" + nfa_audio_name)
+    os.makedirs(nfa_dir, exist_ok=True)
 
-        ends = [e for _, e in vad_segs]
-        j = bisect_left(ends, e0)
-        offset_cand = []
-        if j < len(ends):
-            offset_cand.append(ends[j])
-        if j - 1 >= 0:
-            offset_cand.append(ends[j - 1])
-        offset_cand = [c for c in offset_cand if abs(c - e0) <= SNAP_END_WINDOW_MS]
-        e = min(offset_cand, key=lambda c: abs(c - e0)) if offset_cand else e0
-        if prev_end is not None:
-            s = max(s, prev_end + 1)
-        if e - s < MIN_DURATION_MS:
-            e = s + MIN_DURATION_MS
-        l["res_start"], l["res_end"] = int(s), int(e)
-        prev_end = l["res_end"]
+    ctm_path = os.path.join(nfa_dir, "ctm", "tokens", f"{nfa_audio_name}.ctm")
+    if not os.path.exists(ctm_path):
+        print("running NFA")
+        os.makedirs(os.path.dirname(ctm_path), exist_ok=True)
 
+        manifest_path = os.path.join(nfa_dir, "manifest.json")
+        text_joined = "|".join([line["clean"] for line in lines if line.get("clean")])
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"audio_filepath": audio_path, "text": text_joined}) + "\n")
 
-def adjust_boundaries_with_vad_gaps(lines, vad_segs):
-    if len(vad_segs) < 2:
-        return
-    vad_gaps = [(vad_segs[i][1], vad_segs[i + 1][0]) for i in range(len(vad_segs) - 1)]
-    clean_idx = [i for i, l in enumerate(lines) if l.get("clean")]
-    for k in range(len(clean_idx) - 1):
-        i = clean_idx[k]
-        j = clean_idx[k + 1]
-        e_i = int(lines[i]["res_end"]) if lines[i].get("clean") else None
-        s_j = int(lines[j]["res_start"]) if lines[j].get("clean") else None
-        if e_i is None or s_j is None:
-            continue
-        boundary = (e_i + s_j) / 2
-        nearest_gap = None
-        min_distance = 10**10
-        for g_start, g_end in vad_gaps:
-            if g_end <= g_start:
+        subprocess.run(
+            [
+                sys.executable,
+                os.path.join(os.path.dirname(__file__), "nfa.py"),
+                f"manifest_filepath={manifest_path}",
+                f"output_dir={nfa_dir}",
+                "additional_segment_grouping_separator=|",
+                "use_vad_prior=True",
+                "vad_prior_k=2.0",
+                f"vad_dir_name={os.path.relpath(os.path.join(work_dir, 'vad'), os.path.dirname(audio_path))}",
+            ],
+            capture_output=True,
+            text=True,
+        )
+
+        if not os.path.exists(ctm_path):
+            raise SystemExit("NFA failed")
+
+    segs = []
+    with open(ctm_path, "r", encoding="utf-8") as f:
+        for l in f:
+            c = l.strip().split()
+            if not c:
                 continue
-            if (g_start <= boundary + GAP_WINDOW_MS / 2) and (g_end >= boundary - GAP_WINDOW_MS / 2):
-                distance = abs(g_start - boundary)
-                if distance < min_distance:
-                    min_distance = distance
-                    nearest_gap = (g_start, g_end)
-        if nearest_gap:
-            lines[i]["res_end"] = int(nearest_gap[0])
-            lines[j]["res_start"] = int(max(nearest_gap[1], lines[i]["res_end"] + 1))
+            start = float(c[2])
+            dur = float(c[3])
+            token = c[4].replace("<b>", "")
+            segs.append({"start": start, "duration": dur, "end": start + dur, "text": token})
+    return segs
 
 
-def cut_off_silence(lines, heuristic_segs, start=True, end=False):
-    for l in lines:
-        if not l.get("clean"):
+def refine_lines(lines, label, heuristic_segs, vad_segs):
+    """
+    reads VAD results (`heuristic_segs`, `vad_segs`) and refines the timings labeled `label` in `lines` in place.
+    """
+    starts = [s for s, _ in vad_segs]
+    ends = [e for _, e in vad_segs]
+
+    # snap line starts and ends to nearby VAD boundaries
+    prev_end = None
+    for line in lines:
+        if not line.get("clean"):
+            continue
+        if f"{label}_start" not in line or f"{label}_end" not in line:
             continue
 
-        s, e = l["res_start"], l["res_end"]
-        overlaps = [(hs, he) for hs, he in heuristic_segs if he >= s and hs <= e]
+        start = int(line[f"{label}_start"])
+        end = int(line[f"{label}_end"])
+
+        snapped_start = nearest_boundary_value(start, starts, SNAP_START_WINDOW_MS)
+        snapped_end = nearest_boundary_value(end, ends, SNAP_END_WINDOW_MS)
+
+        start = snapped_start if snapped_start is not None else start
+        end = snapped_end if snapped_end is not None else end
+
+        if prev_end is not None:
+            start = max(start, prev_end + 1)
+        if end - start < MIN_DURATION_MS:
+            end = start + MIN_DURATION_MS
+
+        line[f"{label}_start"] = int(start)
+        line[f"{label}_end"] = int(end)
+        prev_end = int(end)
+
+    # move adjacent line boundaries into a nearby VAD gap
+    if len(vad_segs) >= 2:
+        vad_gaps = [(vad_segs[i][1], vad_segs[i + 1][0]) for i in range(len(vad_segs) - 1)]
+        clean_idx = [
+            i for i, line in enumerate(lines) if line.get("clean") and f"{label}_start" in line and f"{label}_end" in line
+        ]
+
+        for k in range(len(clean_idx) - 1):
+            i = clean_idx[k]
+            j = clean_idx[k + 1]
+            end_i = int(lines[i][f"{label}_end"])
+            start_j = int(lines[j][f"{label}_start"])
+            boundary = (end_i + start_j) / 2
+
+            nearest_gap = None
+            min_distance = 10**10
+            for gap_start, gap_end in vad_gaps:
+                if gap_end <= gap_start:
+                    continue
+                if gap_start <= boundary + GAP_WINDOW_MS / 2 and gap_end >= boundary - GAP_WINDOW_MS / 2:
+                    distance = abs(gap_start - boundary)
+                    if distance < min_distance:
+                        min_distance = distance
+                        nearest_gap = (gap_start, gap_end)
+
+            if nearest_gap:
+                lines[i][f"{label}_end"] = int(nearest_gap[0])
+                lines[j][f"{label}_start"] = int(max(nearest_gap[1], lines[i][f"{label}_end"] + 1))
+
+    # trim line edges to overlapping heuristic speech spans
+    for line in lines:
+        if not line.get("clean"):
+            continue
+        if f"{label}_start" not in line or f"{label}_end" not in line:
+            continue
+
+        start = line[f"{label}_start"]
+        end = line[f"{label}_end"]
+        overlaps = [(hs, he) for hs, he in heuristic_segs if he >= start and hs <= end]
         if overlaps:
-            if start:
-                s = max(s, min(hs for hs, _ in overlaps))
-            if end:
-                e = min(e, max(he for _, he in overlaps))
-        l["res_start"], l["res_end"] = s, e
+            start = max(start, min(hs for hs, _ in overlaps))
+            end = min(end, max(he for _, he in overlaps))
+
+        line[f"{label}_start"] = start
+        line[f"{label}_end"] = end
+
+
+def total_vad_pred(lines, frame_hop, vad_pred, label):
+    total = 0
+    vad_len = len(vad_pred)
+
+    for line in lines:
+        if line.get("clean"):
+            start = int(line.get(f"{label}_start", 0))
+            end = int(line.get(f"{label}_end", 0))
+            frame_start = max(0, min(int(start / frame_hop), vad_len - 1))
+            frame_end = max(frame_start + 1, min(int(np.ceil(end / frame_hop)), vad_len))
+            total += np.mean(vad_pred[frame_start:frame_end]).item()
+    return total
 
 
 def build_ass(lines):
@@ -256,17 +297,19 @@ def build_ass(lines):
     subs.info["PlayResY"] = ""
 
     dialogue_events = [
-        pysubs2.SSAEvent(start=l["res_start"], end=l["res_end"], text=l["raw"], style="Default", name=l.get("name", ""))
-        for l in lines
-        if l.get("clean")
+        pysubs2.SSAEvent(
+            start=line["res_start"], end=line["res_end"], text=line["raw"], style="Default", name=line.get("name", "")
+        )
+        for line in lines
+        if line.get("clean")
     ]
     other_events = []
-    for idx, l in enumerate(lines):
-        if not l["clean"]:
+    for idx, line in enumerate(lines):
+        if not line["clean"]:
             prev_event = next((lines[i] for i in range(idx - 1, -1, -1) if lines[i]["clean"]), None)
             next_event = next((lines[i] for i in range(idx + 1, len(lines)) if lines[i]["clean"]), None)
-            start = l.get("raw_start", 0)
-            end = l.get("raw_end", 1000)
+            start = line.get("raw_start", 0)
+            end = line.get("raw_end", 1000)
             if prev_event and next_event:
                 x = (prev_event["res_end"] + next_event["res_start"]) / 2.0
                 start = x - 500
@@ -277,7 +320,9 @@ def build_ass(lines):
             elif prev_event:
                 start = prev_event["res_end"]
                 end = prev_event["res_end"] + 1000
-            other_events.append(pysubs2.SSAEvent(start=start, end=end, text=l["raw"], style="Top", name=l.get("name", "")))
+            other_events.append(
+                pysubs2.SSAEvent(start=start, end=end, text=line["raw"], style="Top", name=line.get("name", ""))
+            )
     subs.events = dialogue_events + other_events
     return subs, dialogue_events, other_events
 
@@ -286,7 +331,7 @@ def evaluate_alignment(dialogue_events, ground_path, fps):
     import statistics
 
     ground = pysubs2.load(ground_path)
-    ground.events = [e for e in ground.events if not e.is_comment and e.style == "Default"]
+    ground.events = [e for e in ground.events if len(e.text.strip()) > 0 and not e.is_comment]
     assert len(dialogue_events) == len(ground.events)
 
     start_quantiles = statistics.quantiles(((g.start - p.start) for g, p in zip(ground.events, dialogue_events)), n=100)
@@ -328,12 +373,11 @@ def main():
     parser = argparse.ArgumentParser(description="generate ASS via Forced Alignment + VAD refinement.")
     parser.add_argument("--work_dir", required=True, help="all files below relative to this, unless absolute")
     parser.add_argument("--lines", required=True, help="path to lines TXT/ASS file")
-    parser.add_argument("--do-check-with-raw", action="store_true", help="whether to check alignment against raw timestamps")
+    parser.add_argument("--do_check_with_raw", action="store_true", help="whether to check alignment against raw timestamps")
     parser.add_argument("--video", default="1.mkv", help="path to video file for alignment")
     parser.add_argument("--output", default="align.ass", help="output ASS filename")
     parser.add_argument("--ground", default=None, help="ground truth ASS filename for evaluation")
     parser.add_argument("--fps", default=24 / 1.001, help="frames per second for video")
-
     args = parser.parse_args()
 
     work_dir = os.path.abspath(os.path.expanduser(args.work_dir))
@@ -345,54 +389,50 @@ def main():
 
     # extract mono 16kHz audio if not exists
     video_path = os.path.join(work_dir, args.video)
-    audio_16k_path = os.path.join(work_dir, "mono_16k.wav")
-    if not os.path.exists(audio_16k_path):
+    mix_path = os.path.join(work_dir, "mono_16k.wav")
+    if not os.path.exists(mix_path):
         print("extracting mono 16kHz audio")
-        subprocess.run(["ffmpeg", "-i", video_path, "-ac", "1", "-ar", "16000", audio_16k_path], capture_output=True)
+        subprocess.run(["ffmpeg", "-i", video_path, "-ac", "1", "-ar", "16000", mix_path], capture_output=True)
 
     # VAD
-    heuristic_segs, vad_segs = run_vad(work_dir, video_path=video_path)
-    if not vad_segs:
-        raise SystemExit("VAD failed")
+    frame_hop, vad_pred, heuristic_segs, vad_segs = run_vad(work_dir, video_path=video_path)
+    vocals_path = os.path.join(work_dir, "vad", "vocals_mono_16k.wav")
 
-    # NFA (with optional VAD prior)
-    nfa_output_dir = os.path.join(work_dir, "nfa", "nfa_output")
-    ctm_path = os.path.join(nfa_output_dir, "ctm", "tokens", "mono_16k.ctm")
-    if not os.path.exists(ctm_path):
-        print("running NFA")
-        os.makedirs(os.path.dirname(ctm_path), exist_ok=True)
-        nfa_dir = os.path.join(work_dir, "nfa")
-        os.makedirs(nfa_dir, exist_ok=True)
-        manifest_path = os.path.join(nfa_dir, "manifest.json")
-        text_joined = "|".join([l["clean"] for l in lines if l.get("clean")])
-        with open(manifest_path, "w", encoding="utf-8") as f:
-            f.write(json.dumps({"audio_filepath": audio_16k_path, "text": text_joined}) + "\n")
-        subprocess.run(
-            [
-                sys.executable,
-                os.path.join(os.path.dirname(__file__), "nfa.py"),
-                f"manifest_filepath={manifest_path}",
-                f"output_dir={nfa_output_dir}",
-                "additional_segment_grouping_separator=|",
-                "use_vad_prior=True",
-                "vad_prior_k=2.0",
-            ],
-            capture_output=True,
-        )
-        if not os.path.exists(ctm_path):
-            raise SystemExit("NFA failed")
+    # NFA, then apply to `lines`
+    apply_to_lines(run_nfa(work_dir, lines, mix_path), lines, label="nfa_mix", start_pad=0, end_pad=2, pad_time_frac=0.5, optimize_long_seg=True)
+    apply_to_lines(run_nfa(work_dir, lines, vocals_path), lines, label="nfa_vocals", start_pad=0, end_pad=2, pad_time_frac=0.5, optimize_long_seg=True)
 
-    # refine with VAD
-    seg = load_ctm_tokens(ctm_path)
-    process_segments(seg, lines, label="nfa", do_check_with_raw=args.do_check_with_raw)
-    for l in lines:
-        if l.get("clean"):
-            l["res_start"] = l.get("nfa_start", 0)
-            l["res_end"] = l.get("nfa_end", 0)
+    # refine candidate alignment based on VAD segments
+    refine_lines(lines, "nfa_mix", heuristic_segs, vad_segs)
+    refine_lines(lines, "nfa_vocals", heuristic_segs, vad_segs)
 
-    snap_lines_with_vad(lines, vad_segs)
-    adjust_boundaries_with_vad_gaps(lines, vad_segs)
-    cut_off_silence(lines, heuristic_segs)
+    # score with VAD predictions and choose the better alignment
+    mix_score = total_vad_pred(lines, frame_hop, vad_pred, label="nfa_mix")
+    vocals_score = total_vad_pred(lines, frame_hop, vad_pred, label="nfa_vocals")
+    chosen_label = "nfa_vocals" if vocals_score > mix_score else "nfa_mix"
+    for line in lines:
+        if line.get("clean"):
+            line["res_start"] = line[f"{chosen_label}_start"]
+            line["res_end"] = line[f"{chosen_label}_end"]
+
+    if args.do_check_with_raw:
+        # clamp timings back to raw timestamps when they drift too far
+        for line in lines:
+            if line.get("clean"):
+                start = line["res_start"]
+                end = line["res_end"]
+
+                if "raw_start" in line and not (
+                    float(line["raw_start"]) - CHECK_WITH_RAW_TOLERANCE_MS < start < float(line.get("raw_end", start))
+                ):
+                    start = float(line["raw_start"])
+                if "raw_end" in line and not (
+                    float(line.get("raw_start", end)) < end < float(line["raw_end"]) + CHECK_WITH_RAW_TOLERANCE_MS
+                ):
+                    end = float(line["raw_end"])
+
+                line["res_start"] = start
+                line["res_end"] = end
 
     subs, dialogue_events, _ = build_ass(lines)
     output_path = args.output

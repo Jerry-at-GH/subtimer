@@ -10,7 +10,7 @@ first get an Nvidia GPU. then install `libc++1` (if on Linux). now run
 conda create -n speech python=3.12 -y
 conda activate speech
 conda install -c conda-forge ffmpeg libstdcxx-ng -y
-uv pip install -U --force-reinstall git+https://github.com/TEN-framework/ten-vad 'nemo_toolkit[asr]@git+https://github.com/NVIDIA/NeMo' 'audio-separator[gpu]' javad librosa numpy pysubs2 scipy silero-vad torch torchaudio
+uv pip install -U --force-reinstall git+https://github.com/TEN-framework/ten-vad 'nemo_toolkit[asr]' 'audio-separator[gpu]' javad librosa numpy pysubs2 scipy silero-vad torch torchaudio
 ```
 
 where `uv` is optional.
@@ -50,8 +50,8 @@ and you should see something like
 [total: 297 lines]
       |   p10   p25   p50   p75   p90    | mean abs |   ≤100   ≤500 ms
 start |    +0    +0    +0    +0   +30 ms |    106ms |  92.3%  95.6%
-end   |  -447   -10    +0    +0    +0 ms |    628ms |  75.4%  87.2%
-both  |                                  |    367ms |  71.0%  85.2%
+end   |  -302    +0   +30   +50   +90 ms |    639ms |  78.8%  88.2%
+both  |                                  |    372ms |  74.7%  86.2%
 ```
 
 ## credits
