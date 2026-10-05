@@ -1,0 +1,74 @@
+[build-system]
+requires = ["hatchling==1.32.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "subtimer-worker"
+version = "1.8.0"
+description = "GPU subtitle alignment for Japanese speech"
+requires-python = ">=3.12,<3.13"
+classifiers = [
+  "Environment :: GPU :: NVIDIA CUDA :: 13",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "audioread==3.1.0",
+  "audio-separator[gpu]==0.47.0",
+  "bournemouth-forced-aligner @ git+https://github.com/tabahi/bournemouth-forced-aligner.git@95647d53f9e9741aad91123e8da72df993bf3ea7",
+  "crispasr @ git+https://github.com/CrispStrobe/CrispASR.git@ba3499e7c7f6013a73738cad530b252d59675f49#subdirectory=python",
+  "crisperwhisper[transformers]==2.0.3",
+  "fireredvad==0.0.2",
+  "gguf==0.19.0",
+  "huggingface-hub==0.36.2",
+  "librosa==1.0.0",
+  "lightgbm==4.7.0",
+  "numpy==2.5.3",
+  "numba==0.67.0",
+  "packaging==26.3",
+  "nvidia-cuda-runtime==13.4.49",
+  "phonemizer==3.4.0",
+  "pyopenjtalk==0.4.1",
+  "qwen-asr==0.0.6",
+  "scipy==1.18.1",
+  "sentencepiece==0.2.2",
+  "silero-vad==6.2.1",
+  "soundfile==0.14.0",
+  "ten-vad @ git+https://github.com/TEN-framework/ten-vad.git@22a3bcd4509d0faaa8eef4881e8af5f39c178950",
+  "torch==2.14.0",
+  "torchaudio==2.11.0",
+  "transformers==4.57.6",
+  "triton==3.8.0",
+]
+
+[project.scripts]
+subtimer-worker = "subtimer:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["subtimer"]
+artifacts = ["subtimer/models/**", "subtimer/native/encoder.so"]
+
+[tool.hatch.build.targets.wheel.hooks.custom]
+path = "hatch_build.py"
+
+[tool.hatch.build.targets.sdist]
+include = ["/subtimer", "/pyproject.toml", "/hatch_build.py"]
+artifacts = ["subtimer/models/**", "subtimer/native/encoder.so"]
+exclude = ["/.gitignore", "/uv.lock"]
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv]
+python-preference = "only-managed"
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+override-dependencies = ["nvidia-cuda-runtime==13.4.49"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
+torchaudio = { index = "pytorch-cu130" }

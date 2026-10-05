@@ -1,0 +1,21 @@
+--- a/src/core/fastconformer.h
++++ b/src/core/fastconformer.h
+@@ -609,0 +610,7 @@
++static inline ggml_tensor* pad_time(ggml_context* ctx, ggml_tensor* x, int left, int right) {
++    const int64_t channels = x->ne[0], time = x->ne[1], heads = x->ne[2];
++    ggml_tensor* flat = ggml_reshape_2d(ctx, x, channels * time, heads);
++    ggml_tensor* padded = ggml_pad_ext(ctx, flat, channels * left, channels * right, 0, 0, 0, 0, 0, 0);
++    return ggml_reshape_3d(ctx, padded, channels, time + left + right, heads);
++}
++
+@@ -636 +643 @@
+-        return (Tp == T) ? xin : ggml_pad_ext(ctx0, xin, 0, 0, 0, Tp - T, 0, 0, 0, 0);
++        return (Tp == T) ? xin : pad_time(ctx0, xin, 0, Tp - T);
+@@ -641 +648 @@
+-    auto pad_kv = [&](ggml_tensor* xin) { return ggml_pad_ext(ctx0, xin, 0, 0, BS, BS + (Tp - T), 0, 0, 0, 0); };
++    auto pad_kv = [&](ggml_tensor* xin) { return pad_time(ctx0, xin, BS, BS + (Tp - T)); };
+@@ -754,2 +761,2 @@
+-    ggml_tensor* Qup = (Tp == T) ? Qu : ggml_cont(ctx0, ggml_pad_ext(ctx0, Qu, 0, 0, 0, Tp - T, 0, 0, 0, 0));
+-    ggml_tensor* Qvp = (Tp == T) ? Qv : ggml_cont(ctx0, ggml_pad_ext(ctx0, Qv, 0, 0, 0, Tp - T, 0, 0, 0, 0));
++    ggml_tensor* Qup = (Tp == T) ? Qu : ggml_cont(ctx0, pad_time(ctx0, Qu, 0, Tp - T));
++    ggml_tensor* Qvp = (Tp == T) ? Qv : ggml_cont(ctx0, pad_time(ctx0, Qv, 0, Tp - T));

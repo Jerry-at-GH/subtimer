@@ -1,0 +1,9 @@
+.cache/
+.venv/
+__pycache__/
+*.egg-info/
+*.py[cod]
+.ruff_cache/
+dist/
+job.json
+reports.jsonl
