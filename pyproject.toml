@@ -1,0 +1,45 @@
+[build-system]
+requires = ["hatchling==1.32.0"]
+build-backend = "hatchling.build"
+
+[project]
+name = "subtimer-worker"
+version = "1.0"
+description = "GPU subtitle alignment for Japanese speech"
+readme = "README.md"
+requires-python = ">=3.12,<3.13"
+classifiers = [
+  "Environment :: GPU :: NVIDIA CUDA :: 13",
+  "Operating System :: POSIX :: Linux",
+  "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+  "huggingface-hub==0.36.2",
+  "numpy==2.5.3",
+  "sentencepiece==0.2.2",
+  "soundfile==0.14.0",
+  "torch==2.14.0",
+  "transformers==4.57.6",
+  "triton==3.8.0",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["subtimer"]
+artifacts = ["subtimer/models/**"]
+
+[tool.hatch.build.targets.sdist]
+include = ["/subtimer", "/pyproject.toml", "/README.md"]
+artifacts = ["subtimer/models/**"]
+exclude = ["/.gitignore", "/uv.lock"]
+
+[[tool.uv.index]]
+name = "pytorch-cu130"
+url = "https://download.pytorch.org/whl/cu130"
+explicit = true
+
+[tool.uv]
+python-preference = "only-managed"
+environments = ["sys_platform == 'linux' and platform_machine == 'x86_64'"]
+
+[tool.uv.sources]
+torch = { index = "pytorch-cu130" }
