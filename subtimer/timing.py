@@ -651,10 +651,15 @@ def align_features(texts, features, processor, full, progress):
                     first, count = len(token_ids), len(tokens)
                 token_ids.extend(tokens)
             supplied = model.prompt("\n".join(texts[i] for i in context))
-            if not count or len(supplied) + len(token_ids) > 440:
+            # the prompt and the scored tokens share the decoder's positions; a line whose neighbours do not fit
+            # is decoded alone, and a line that does not fit alone cannot be timed
+            positions = model.decoder.config.max_target_positions
+            if not count or len(supplied) + len(token_ids) > positions:
                 token_ids = tokenizer.encode(texts[cue], add_special_tokens=False)
                 supplied = model.prompt(texts[cue])
                 first, count = 0, len(token_ids)
+            if len(supplied) + len(token_ids) > positions:
+                raise ValueError(f"timed line {cue + 1} is too long to time")
             token_row = (supplied + token_ids, len(supplied) - 1 + first, count)
 
             pairs.extend((cue, chunk, token_row) for chunk in selected)
