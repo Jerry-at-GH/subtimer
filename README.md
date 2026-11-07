@@ -2,7 +2,7 @@
 
 automatic subtitle timing for Japanese audio.
 
-give subtimer a recording and its script, and it estimates when each line starts and ends, so you only need to review and adjust the timings instead of setting each one by hand.
+give subtimer a recording and its transcript, and it estimates when each line starts and ends, so you only need to review and adjust the timings instead of setting each one by hand.
 
 in our tests on typical Japanese speech, more than 95% of line starts and ends fall within 100 ms of reference timings.
 
@@ -10,7 +10,7 @@ questions are welcome at admin@j-23.top.
 
 ## try it online
 
-the easiest way to try subtimer is the website, https://subtimer.j-23.top. upload a video or audio file, paste in the script, and you'll get an ASS subtitle file back. use this user key:
+the easiest way to try subtimer is the website, https://subtimer.j-23.top. upload a video or audio file, paste in the transcript, and you'll get an ASS subtitle file back. use this user key:
 
 ```
 DFE4DVVKQIAXwptYraG799SUPUeWgmfb6sHoBBcf1tV1pt9SuaogwKVCMRITsPLpISYWuN8pgHSF8pFdpMkZat
@@ -20,9 +20,9 @@ the trial key is shared and has a daily limit on audio minutes. feel free to [em
 
 ## run it locally
 
-this repository is only the timing step, as a Python library. you give it cleaned-up lines and audio, and it gives back start and end times. turning media into audio, cleaning up the script and writing subtitle files are up to you, which makes it easy to drop into a workflow you already have.
+this repository is only the timing step, as a Python library. you give it cleaned-up lines and audio, and it gives back start and end times. turning media into audio, cleaning up the transcript and writing subtitle files are up to you, which makes it easy to drop into a workflow you already have.
 
-a coding agent can handle the setup, audio conversion and script cleanup for you; point it at this README.
+a coding agent can handle the setup, audio conversion and transcript cleanup for you; point it at this README.
 
 ### install
 
